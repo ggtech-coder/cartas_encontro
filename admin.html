@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Painel — Cartas Videira</title>
+<title> </title>
 <link rel="icon" href="img/logo.jpg">
 <link rel="stylesheet" href="css/style.css">
 </head>
@@ -27,32 +27,69 @@
     <img src="img/logo.jpg" alt="">
     <div><b>Videira</b><small>Painel de cartas</small></div>
     <div class="sp"></div>
+    <button class="b s" id="csv">Exportar CSV</button>
     <button class="b s" id="sair">Sair</button>
   </div>
 
   <div class="page">
     <div class="stats">
-      <div class="stat"><b id="sTotal">0</b><span>cartas</span></div>
-      <div class="stat"><b id="sFilhos">0</b><span>pessoas recebendo</span></div>
-      <div class="stat"><b id="sPend">0</b><span>não impressas</span></div>
+      <button class="stat" data-f="todas"><b id="sTotal">0</b><span>cartas</span></button>
+      <button class="stat" id="sPessoasBtn"><b id="sFilhos">0</b><span>pessoas recebendo</span></button>
+      <button class="stat" data-f="pend"><b id="sPend">0</b><span>não impressas</span></button>
     </div>
 
     <div class="tools">
-      <input type="search" id="busca" placeholder="Buscar por quem recebe ou quem escreveu">
-      <select id="filtro">
-        <option value="todas">Todas</option>
-        <option value="pend">Não impressas</option>
-        <option value="ok">Já impressas</option>
+      <input type="search" id="busca" placeholder="Buscar por quem recebe ou quem escreveu   ( / )">
+      <select id="ordem">
+        <option value="az">Ordem A–Z</option>
+        <option value="novas">Mais recentes</option>
+        <option value="antigas">Mais antigas</option>
       </select>
-      <button class="b" id="selTudo">Selecionar visíveis</button>
-      <button class="b p" id="impSel">Imprimir selecionadas</button>
-      <button class="b" id="impTudo">Imprimir todas visíveis</button>
+      <div class="seg">
+        <button data-m="cartas" class="on">Cartas</button>
+        <button data-m="pessoas">Por pessoa</button>
+      </div>
+    </div>
+
+    <div class="chips">
+      <button class="chip on" data-f="todas">Todas<i id="cT">0</i></button>
+      <button class="chip" data-f="pend">Não impressas<i id="cP">0</i></button>
+      <button class="chip" data-f="ok">Impressas<i id="cI">0</i></button>
+      <span class="sp"></span>
+      <button class="b s" id="selTudo">Selecionar visíveis</button>
+      <button class="b s p" id="impTudo">Imprimir todas visíveis</button>
     </div>
 
     <div id="lista"></div>
   </div>
 </div>
 
+<div class="modal hidden" id="modal">
+  <div class="mbox">
+    <div class="mh">
+      <button class="xb" id="mPrev" title="Anterior (←)">‹</button>
+      <button class="xb" id="mNext" title="Próxima (→)">›</button>
+      <div class="t"><b id="mTit"></b><span id="mMeta"></span></div>
+      <button class="xb" id="mFechar" title="Fechar (Esc)">×</button>
+    </div>
+    <div class="mb" id="mTxt"></div>
+    <div class="mf">
+      <button class="b p" id="mImp">Imprimir</button>
+      <button class="b" id="mCopiar">Copiar texto</button>
+      <button class="b" id="mMarcar"></button>
+      <span class="sp"></span>
+      <span id="mPos" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+  </div>
+</div>
+
+<div class="fab" id="fab">
+  <b id="fabN"></b>
+  <button class="b p s" id="fImp">Imprimir</button>
+  <button class="b s" id="fMarcar">Marcar impressas</button>
+  <button class="b s" id="fLimpar">Limpar</button>
+</div>
+<div class="toasts" id="toasts"></div>
 <div id="printArea"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -65,11 +102,33 @@ const T = window.APP_TEXT;
 firebase.initializeApp(window.FIREBASE_CONFIG);
 const auth = firebase.auth(), db = firebase.firestore();
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
-const ordena = (a,b) => (a.nomeFilhoBusca||'').localeCompare(b.nomeFilhoBusca||'');
+const norm = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 
-let cartas = [], sel = new Set(), unsub = null;
+let cartas = [], sel = new Set(), filtro = 'todas', ordem = 'az', modo = 'cartas',
+    loaded = false, ocultas = new Set(), novas = new Set(), abertas = new Set(),
+    leitor = { ids: [], i: 0 }, unsub = null;
 
+/* ---------- util ---------- */
+function toast(msg, o = {}) {
+  const t = document.createElement('div'); t.className = 'toast';
+  t.innerHTML = `<span>${esc(msg)}</span>` + (o.acao ? `<button>${esc(o.acao)}</button>` : '');
+  if (o.acao) t.querySelector('button').onclick = () => { o.fn(); t.remove(); };
+  $('toasts').appendChild(t);
+  setTimeout(() => t.remove(), o.ms || 4000);
+}
+function tempo(ts) {
+  if (!ts?.toDate) return '';
+  const d = ts.toDate(), s = (Date.now() - d) / 1000;
+  if (s < 60) return 'agora há pouco';
+  if (s < 3600) return `há ${Math.floor(s/60)} min`;
+  if (s < 86400) return `há ${Math.floor(s/3600)} h`;
+  return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+}
+const quem = c => c.parentesco ? ` (${esc(c.parentesco)})` : '';
+const ts = c => c.criadoEm?.toMillis ? c.criadoEm.toMillis() : Date.now();
+const ativas = () => cartas.filter(c => !ocultas.has(c.id));
+
+/* ---------- login ---------- */
 $('lf').onsubmit = async e => {
   e.preventDefault(); $('lerr').classList.add('hidden');
   try { await auth.signInWithEmailAndPassword($('em').value, $('pw').value); }
@@ -80,8 +139,17 @@ $('sair').onclick = () => auth.signOut();
 auth.onAuthStateChanged(u => {
   if (u) {
     $('loginBox').classList.add('hidden'); $('app').classList.remove('hidden');
+    loaded = false; render();
     unsub = db.collection('cartas').orderBy('criadoEm','desc').onSnapshot(s => {
-      cartas = s.docs.map(d => ({ id: d.id, ...d.data() })); render();
+      if (loaded) s.docChanges().forEach(ch => {
+        if (ch.type === 'added' && !ch.doc.metadata.hasPendingWrites) {
+          const d = ch.doc.data(); novas.add(ch.doc.id);
+          toast('Nova carta para ' + d.nomeFilho);
+          setTimeout(() => novas.delete(ch.doc.id), 3000);
+        }
+      });
+      cartas = s.docs.map(d => ({ id: d.id, ...d.data() }));
+      loaded = true; render(); if (!$('modal').classList.contains('hidden')) pintaLeitor();
     }, err => { console.error(err); alert('Sem permissão para ler as cartas. Confira o e-mail admin nas regras do Firestore.'); });
   } else {
     if (unsub) unsub();
@@ -89,61 +157,182 @@ auth.onAuthStateChanged(u => {
   }
 });
 
-function visiveis() {
-  const q = norm($('busca').value.trim()), f = $('filtro').value;
-  return cartas.filter(c =>
-    (!q || norm(c.nomeFilho||'').includes(q) || norm(c.remetente||'').includes(q)) &&
-    (f === 'todas' || (f === 'pend' ? !c.impressa : c.impressa))
-  ).sort(ordena);
+/* ---------- filtros ---------- */
+function base() {
+  const q = norm($('busca').value.trim());
+  return ativas().filter(c => !q || norm(c.nomeFilho).includes(q) || norm(c.remetente).includes(q));
 }
-const fmt = ts => ts?.toDate ? ts.toDate().toLocaleString('pt-BR') : '';
-const quemTxt = c => c.parentesco ? ` (${esc(c.parentesco)})` : '';
+function ordenar(l) {
+  return l.sort((a,b) => ordem === 'novas' ? ts(b) - ts(a) : ordem === 'antigas' ? ts(a) - ts(b)
+    : (a.nomeFilhoBusca||'').localeCompare(b.nomeFilhoBusca||'') || ts(a) - ts(b));
+}
+function visiveis() {
+  return ordenar(base().filter(c => filtro === 'todas' || (filtro === 'pend' ? !c.impressa : c.impressa)));
+}
+
+/* ---------- render ---------- */
+function itemHTML(c) {
+  return `<div class="item ${sel.has(c.id)?'sel':''} ${novas.has(c.id)?'new':''}" data-id="${c.id}">
+    <div class="ck"><input type="checkbox" data-a="sel" ${sel.has(c.id)?'checked':''}></div>
+    <div>
+      <h3>Para: ${esc(c.nomeFilho)}<span class="tag ${c.impressa?'y':'n'}">${c.impressa?'impressa':'não impressa'}</span></h3>
+      <div class="meta">De: ${esc(c.remetente)}${quem(c)} · ${tempo(c.criadoEm)}</div>
+      <div class="txt">${esc(c.mensagem)}</div>
+      <div class="acts">
+        <button class="b s" data-a="abrir">Abrir</button>
+        <button class="b s p" data-a="imp">Imprimir</button>
+        <button class="b s" data-a="mark">${c.impressa?'Marcar como não impressa':'Marcar como impressa'}</button>
+        <button class="b s d" data-a="del">Excluir</button>
+      </div>
+    </div></div>`;
+}
+
+function pessoasHTML(v) {
+  const m = new Map();
+  v.forEach(c => { const k = c.nomeFilhoBusca || norm(c.nomeFilho); if (!m.has(k)) m.set(k, { k, nome: c.nomeFilho, l: [] }); m.get(k).l.push(c); });
+  return [...m.values()].map(g => {
+    const pend = g.l.filter(c => !c.impressa).length;
+    return `<div class="person ${abertas.has(g.k)?'open':''}" data-k="${esc(g.k)}">
+      <div class="ph" data-a="ptoggle">
+        <div class="av">${esc(g.nome.trim()[0]?.toUpperCase()||'?')}</div>
+        <div class="pn"><b>${esc(g.nome)}</b><span>${g.l.length} carta(s) · ${pend ? pend + ' não impressa(s)' : 'todas impressas'}</span></div>
+        <span class="badge">${g.l.length}</span>
+        <button class="b s p" data-a="pimp">Imprimir tudo</button>
+      </div>
+      <div class="pl">${g.l.map(c => `<div class="pi" data-id="${c.id}" data-a="pabrir">
+        <small>De ${esc(c.remetente)}${quem(c)} · ${tempo(c.criadoEm)} · ${c.impressa?'impressa':'não impressa'}</small>
+        <p>${esc(c.mensagem)}</p></div>`).join('')}</div>
+    </div>`;
+  }).join('');
+}
 
 function render() {
-  $('sTotal').textContent = cartas.length;
-  $('sFilhos').textContent = new Set(cartas.map(c => c.nomeFilhoBusca)).size;
-  $('sPend').textContent = cartas.filter(c => !c.impressa).length;
+  const all = ativas(), b = base();
+  $('sTotal').textContent = all.length;
+  $('sFilhos').textContent = new Set(all.map(c => c.nomeFilhoBusca)).size;
+  $('sPend').textContent = all.filter(c => !c.impressa).length;
+  $('cT').textContent = b.length;
+  $('cP').textContent = b.filter(c => !c.impressa).length;
+  $('cI').textContent = b.filter(c => c.impressa).length;
+  document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.f === filtro));
+  document.querySelectorAll('.seg button').forEach(x => x.classList.toggle('on', x.dataset.m === modo));
+
+  if (!loaded) { $('lista').innerHTML = '<div class="sk"></div><div class="sk"></div><div class="sk"></div>'; return; }
   const v = visiveis();
-  $('lista').innerHTML = v.length ? v.map(c => `
-    <div class="item" data-id="${c.id}">
-      <div class="ck"><input type="checkbox" data-a="sel" ${sel.has(c.id)?'checked':''}></div>
-      <div>
-        <h3>Para: ${esc(c.nomeFilho)}<span class="tag ${c.impressa?'y':'n'}">${c.impressa?'impressa':'não impressa'}</span></h3>
-        <div class="meta">De: ${esc(c.remetente)}${quemTxt(c)} · ${fmt(c.criadoEm)}</div>
-        <div class="txt">${esc(c.mensagem)}</div>
-        <div class="acts">
-          <button class="b s" data-a="ler">Ler completa</button>
-          <button class="b s p" data-a="imp">Imprimir</button>
-          <button class="b s" data-a="mark">${c.impressa?'Marcar como não impressa':'Marcar como impressa'}</button>
-          <button class="b s d" data-a="del">Excluir</button>
-        </div>
-      </div>
-    </div>`).join('') : '<div class="empty">Nenhuma carta encontrada.</div>';
+  $('lista').innerHTML = !v.length ? '<div class="empty">Nenhuma carta encontrada.</div>'
+    : modo === 'cartas' ? v.map(itemHTML).join('') : pessoasHTML(v);
+
+  for (const id of [...sel]) if (!all.some(c => c.id === id)) sel.delete(id);
+  $('fabN').textContent = sel.size + (sel.size === 1 ? ' selecionada' : ' selecionadas');
+  $('fab').classList.toggle('show', sel.size > 0);
 }
 
-$('busca').oninput = render; $('filtro').onchange = render;
+$('busca').oninput = render;
+$('ordem').onchange = e => { ordem = e.target.value; render(); };
+document.querySelector('.seg').onclick = e => { const b = e.target.closest('[data-m]'); if (b) { modo = b.dataset.m; render(); } };
+document.querySelector('.chips').onclick = e => { const b = e.target.closest('.chip'); if (b) { filtro = b.dataset.f; render(); } };
+document.querySelector('.stats').onclick = e => {
+  const b = e.target.closest('.stat'); if (!b) return;
+  if (b.id === 'sPessoasBtn') modo = 'pessoas'; else { filtro = b.dataset.f; modo = 'cartas'; }
+  render();
+};
 
-$('lista').addEventListener('click', async e => {
-  const b = e.target.closest('[data-a]'); if (!b) return;
-  const el = b.closest('.item'), id = el.dataset.id, c = cartas.find(x => x.id === id), a = b.dataset.a;
-  if (a === 'sel') b.checked ? sel.add(id) : sel.delete(id);
-  if (a === 'ler') { el.classList.toggle('open'); b.textContent = el.classList.contains('open') ? 'Recolher' : 'Ler completa'; }
-  if (a === 'imp') imprimir([c]);
-  if (a === 'mark') await db.collection('cartas').doc(id).update({ impressa: !c.impressa });
-  if (a === 'del' && confirm('Excluir esta carta definitivamente?')) { sel.delete(id); await db.collection('cartas').doc(id).delete(); }
+/* ---------- ações ---------- */
+const byId = id => cartas.find(c => c.id === id);
+
+async function marcar(lista, val) {
+  const batch = db.batch();
+  lista.forEach(c => batch.update(db.collection('cartas').doc(c.id), { impressa: val }));
+  await batch.commit();
+  toast(val ? `${lista.length} carta(s) marcada(s) como impressa(s)` : 'Marcada como não impressa');
+}
+
+function excluir(c) {
+  ocultas.add(c.id); sel.delete(c.id); render();
+  if (!$('modal').classList.contains('hidden')) fecharLeitor();
+  toast('Carta excluída', { acao: 'Desfazer', ms: 6000, fn: () => { ocultas.delete(c.id); render(); } });
+  setTimeout(async () => {
+    if (ocultas.has(c.id)) { try { await db.collection('cartas').doc(c.id).delete(); } catch (e) { console.error(e); } ocultas.delete(c.id); }
+  }, 6200);
+}
+
+$('lista').addEventListener('click', e => {
+  const t = e.target.closest('[data-a]');
+  const it = e.target.closest('.item');
+  const pe = e.target.closest('.person');
+  if (it) {
+    const id = it.dataset.id, c = byId(id), a = t?.dataset.a;
+    if (a === 'sel') { t.checked ? sel.add(id) : sel.delete(id); return render(); }
+    if (a === 'imp') return imprimir([c]);
+    if (a === 'mark') return marcar([c], !c.impressa);
+    if (a === 'del') return confirm('Excluir esta carta?') && excluir(c);
+    return abrirLeitor(visiveis().map(x => x.id), visiveis().findIndex(x => x.id === id));
+  }
+  if (pe) {
+    const k = pe.dataset.k, a = t?.dataset.a;
+    const doPessoa = visiveis().filter(c => (c.nomeFilhoBusca || norm(c.nomeFilho)) === k);
+    if (a === 'pimp') { e.stopPropagation(); return imprimir(doPessoa); }
+    if (a === 'pabrir') { const id = t.dataset.id; return abrirLeitor(doPessoa.map(x => x.id), doPessoa.findIndex(x => x.id === id)); }
+    if (a === 'ptoggle') { abertas.has(k) ? abertas.delete(k) : abertas.add(k); render(); }
+  }
 });
 
 $('selTudo').onclick = () => {
-  const v = visiveis(), todos = v.every(c => sel.has(c.id));
+  const v = visiveis(), todos = v.length && v.every(c => sel.has(c.id));
   v.forEach(c => todos ? sel.delete(c.id) : sel.add(c.id)); render();
 };
-$('impSel').onclick = () => {
-  const l = cartas.filter(c => sel.has(c.id)).sort(ordena);
-  l.length ? imprimir(l) : alert('Selecione ao menos uma carta.');
-};
-$('impTudo').onclick = () => { const v = visiveis(); v.length ? imprimir(v) : alert('Nada para imprimir.'); };
+$('impTudo').onclick = () => { const v = visiveis(); v.length ? imprimir(v) : toast('Nada para imprimir'); };
+$('fImp').onclick = () => imprimir(ordenar(ativas().filter(c => sel.has(c.id))));
+$('fMarcar').onclick = async () => { await marcar(ativas().filter(c => sel.has(c.id)), true); sel.clear(); render(); };
+$('fLimpar').onclick = () => { sel.clear(); render(); };
 
+/* ---------- leitor ---------- */
+function abrirLeitor(ids, i) { if (i < 0) return; leitor = { ids, i }; $('modal').classList.remove('hidden'); pintaLeitor(); }
+function fecharLeitor() { $('modal').classList.add('hidden'); }
+function pintaLeitor() {
+  const c = byId(leitor.ids[leitor.i]);
+  if (!c || ocultas.has(c.id)) return fecharLeitor();
+  $('mTit').textContent = 'Para: ' + c.nomeFilho;
+  $('mMeta').textContent = 'De: ' + c.remetente + (c.parentesco ? ' (' + c.parentesco + ')' : '') + ' · ' + tempo(c.criadoEm);
+  $('mTxt').textContent = c.mensagem;
+  $('mMarcar').textContent = c.impressa ? 'Marcar como não impressa' : 'Marcar como impressa';
+  $('mPos').textContent = (leitor.i + 1) + ' de ' + leitor.ids.length;
+  $('mPrev').disabled = leitor.i === 0; $('mNext').disabled = leitor.i === leitor.ids.length - 1;
+}
+const atualL = () => byId(leitor.ids[leitor.i]);
+$('mFechar').onclick = fecharLeitor;
+$('modal').onclick = e => { if (e.target === $('modal')) fecharLeitor(); };
+$('mPrev').onclick = () => { if (leitor.i > 0) { leitor.i--; pintaLeitor(); } };
+$('mNext').onclick = () => { if (leitor.i < leitor.ids.length - 1) { leitor.i++; pintaLeitor(); } };
+$('mImp').onclick = () => imprimir([atualL()]);
+$('mMarcar').onclick = () => { const c = atualL(); marcar([c], !c.impressa); };
+$('mCopiar').onclick = async () => {
+  try { await navigator.clipboard.writeText(atualL().mensagem); toast('Texto copiado'); } catch { toast('Não foi possível copiar'); }
+};
+
+document.addEventListener('keydown', e => {
+  const aberto = !$('modal').classList.contains('hidden');
+  if (e.key === 'Escape') { if (aberto) fecharLeitor(); else if (sel.size) { sel.clear(); render(); } }
+  else if (aberto && e.key === 'ArrowLeft') $('mPrev').click();
+  else if (aberto && e.key === 'ArrowRight') $('mNext').click();
+  else if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !aberto) { e.preventDefault(); $('busca').focus(); }
+});
+
+/* ---------- CSV ---------- */
+$('csv').onclick = () => {
+  const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const linhas = [['Para','De','Quem é','Carta','Data','Impressa'].map(q).join(';')]
+    .concat(ordenar(ativas()).map(c => [c.nomeFilho, c.remetente, c.parentesco, c.mensagem,
+      c.criadoEm?.toDate ? c.criadoEm.toDate().toLocaleString('pt-BR') : '', c.impressa ? 'sim' : 'não'].map(q).join(';')));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + linhas.join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'cartas-videira.csv'; a.click(); URL.revokeObjectURL(a.href);
+};
+
+/* ---------- impressão ---------- */
 async function imprimir(lista) {
+  lista = lista.filter(Boolean);
+  if (!lista.length) return;
   $('printArea').innerHTML = lista.map(c => `
     <section class="sheet">
       <div class="hd"><img src="img/logo.jpg" alt=""><div><b>${esc(T.igreja)}</b><span>${esc(T.sub)} · ${esc(T.evento)}</span></div></div>
@@ -151,15 +340,15 @@ async function imprimir(lista) {
       <div class="t">${esc(c.mensagem)}</div>
       <div class="sg">${esc(c.remetente)}${c.parentesco ? '<br><small>' + esc(c.parentesco) + '</small>' : ''}</div>
     </section>`).join('');
-  const imgs = [...$('printArea').querySelectorAll('img')];
-  await Promise.all(imgs.map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; })));
+  await Promise.all([...$('printArea').querySelectorAll('img')].map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; })));
+  const t = document.title; document.title = ' ';
   window.print();
-  if (confirm('Marcar ' + lista.length + ' carta(s) como impressa(s)?')) {
-    const batch = db.batch();
-    lista.filter(c => !c.impressa).forEach(c => batch.update(db.collection('cartas').doc(c.id), { impressa: true }));
-    await batch.commit();
-  }
+  document.title = t;
+  const pend = lista.filter(c => !c.impressa);
+  if (pend.length) toast(lista.length + ' carta(s) enviada(s) para impressão', { acao: 'Marcar como impressas', ms: 12000, fn: () => marcar(pend, true) });
 }
+
+setInterval(() => { if (loaded && $('modal').classList.contains('hidden')) render(); }, 60000);
 </script>
 </body>
 </html>
