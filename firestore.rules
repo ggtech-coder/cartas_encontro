@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ATENÇÃO: se este projeto Firebase já tem outros sistemas,
+    // NÃO substitua tudo: copie só o bloco "match /cartas/{id}" para dentro das regras existentes.
+
+    match /cartas/{id} {
+      // Qualquer pessoa pode ENVIAR carta (sem login)
+      allow create: if request.resource.data.keys().hasOnly(
+          ['nomeFilho','nomeFilhoBusca','remetente','parentesco','mensagem','impressa','criadoEm'])
+        && request.resource.data.nomeFilho is string
+        && request.resource.data.nomeFilho.size() >= 3 && request.resource.data.nomeFilho.size() <= 120
+        && request.resource.data.nomeFilhoBusca is string && request.resource.data.nomeFilhoBusca.size() <= 120
+        && request.resource.data.remetente is string
+        && request.resource.data.remetente.size() >= 2 && request.resource.data.remetente.size() <= 120
+        && request.resource.data.parentesco is string && request.resource.data.parentesco.size() <= 60
+        && request.resource.data.mensagem is string
+        && request.resource.data.mensagem.size() >= 10 && request.resource.data.mensagem.size() <= 5000
+        && request.resource.data.impressa == false
+        && request.resource.data.criadoEm == request.time;
+
+      // Só o administrador lê, edita e exclui. TROQUE o e-mail abaixo.
+      allow read, update, delete: if request.auth != null
+        && request.auth.token.email == 'SEU_EMAIL_ADMIN@exemplo.com';
+    }
+  }
+}

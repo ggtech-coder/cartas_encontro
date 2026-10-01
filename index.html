@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Carta — Videira</title>
+<meta name="theme-color" content="#12151f">
+<link rel="icon" href="img/logo.jpg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="top">
+  <img src="img/logo.jpg" alt="Videira Igreja em Células">
+  <div class="ev" id="ev"></div>
+  <h1>Escreva uma carta</h1>
+  <p>Sua carta será entregue durante o encontro. Escreva com o coração.</p>
+</div>
+
+<div class="wrap">
+  <div class="paper" id="formCard">
+    <form id="f" autocomplete="off" novalidate>
+      <label for="filho">Para quem é a carta? <span class="hint">(nome completo)</span></label>
+      <input id="filho" maxlength="120" placeholder="Nome e sobrenome de quem vai receber">
+
+      <div class="row">
+        <div>
+          <label for="remetente">Seu nome</label>
+          <input id="remetente" maxlength="120" placeholder="Quem está escrevendo">
+        </div>
+        <div>
+          <label for="quem">Quem é você? <span class="hint">(opcional)</span></label>
+          <input id="quem" maxlength="60" placeholder="Ex.: mãe, pai, amigo, tia...">
+        </div>
+      </div>
+
+      <label for="mensagem">Sua carta</label>
+      <textarea class="carta" id="mensagem" maxlength="5000" placeholder="Escreva aqui..."></textarea>
+      <div class="counter"><span id="cnt">0</span>/5000</div>
+
+      <input class="hp" id="site" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <div id="err" class="msg err hidden"></div>
+      <button class="btn" id="btn" type="submit">Enviar carta</button>
+    </form>
+  </div>
+
+  <div class="paper done hidden" id="okCard">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12.5l3 3 5-6"/></svg>
+    <h2>Carta enviada</h2>
+    <p>Obrigado por escrever. Deus abençoe!</p>
+    <button class="link" id="outra">Escrever outra carta</button>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const T = window.APP_TEXT;
+$('ev').textContent = T.igreja + ' · ' + T.evento;
+
+firebase.initializeApp(window.FIREBASE_CONFIG);
+const db = firebase.firestore();
+
+const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+const limpa = s => s.replace(/\s+/g,' ').trim();
+const erro = t => { $('err').textContent = t; $('err').classList.remove('hidden'); };
+
+$('mensagem').addEventListener('input', () => $('cnt').textContent = $('mensagem').value.length);
+
+$('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('err').classList.add('hidden');
+  if ($('site').value) return;
+  const nome = limpa($('filho').value), rem = limpa($('remetente').value),
+        quem = limpa($('quem').value), msg = $('mensagem').value.trim();
+  if (nome.split(' ').length < 2) return erro('Digite o nome completo de quem vai receber a carta.');
+  if (rem.length < 2) return erro('Digite o seu nome.');
+  if (msg.length < 10) return erro('Escreva a sua carta.');
+
+  $('btn').disabled = true; $('btn').textContent = 'Enviando...';
+  try {
+    await db.collection('cartas').add({
+      nomeFilho: nome,
+      nomeFilhoBusca: norm(nome),
+      remetente: rem,
+      parentesco: quem,
+      mensagem: msg,
+      impressa: false,
+      criadoEm: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    $('formCard').classList.add('hidden'); $('okCard').classList.remove('hidden');
+    $('f').reset(); $('cnt').textContent = 0; window.scrollTo(0,0);
+  } catch (x) {
+    console.error(x);
+    erro('Não foi possível enviar agora. Confira a internet e tente de novo.');
+  }
+  $('btn').disabled = false; $('btn').textContent = 'Enviar carta';
+});
+
+$('outra').onclick = () => { $('okCard').classList.add('hidden'); $('formCard').classList.remove('hidden'); };
+</script>
+</body>
+</html>

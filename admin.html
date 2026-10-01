@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Painel — Cartas Videira</title>
+<link rel="icon" href="img/logo.jpg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="adm">
+
+<div class="login" id="loginBox">
+  <div class="box">
+    <img src="img/logo.jpg" alt="Videira">
+    <form id="lf">
+      <label>E-mail</label><input type="email" id="em" required>
+      <label>Senha</label><input type="password" id="pw" required>
+      <div id="lerr" class="msg err hidden"></div>
+      <button class="btn" type="submit">Entrar</button>
+    </form>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <div class="bar-top">
+    <img src="img/logo.jpg" alt="">
+    <div><b>Videira</b><small>Painel de cartas</small></div>
+    <div class="sp"></div>
+    <button class="b s" id="sair">Sair</button>
+  </div>
+
+  <div class="page">
+    <div class="stats">
+      <div class="stat"><b id="sTotal">0</b><span>cartas</span></div>
+      <div class="stat"><b id="sFilhos">0</b><span>pessoas recebendo</span></div>
+      <div class="stat"><b id="sPend">0</b><span>não impressas</span></div>
+    </div>
+
+    <div class="tools">
+      <input type="search" id="busca" placeholder="Buscar por quem recebe ou quem escreveu">
+      <select id="filtro">
+        <option value="todas">Todas</option>
+        <option value="pend">Não impressas</option>
+        <option value="ok">Já impressas</option>
+      </select>
+      <button class="b" id="selTudo">Selecionar visíveis</button>
+      <button class="b p" id="impSel">Imprimir selecionadas</button>
+      <button class="b" id="impTudo">Imprimir todas visíveis</button>
+    </div>
+
+    <div id="lista"></div>
+  </div>
+</div>
+
+<div id="printArea"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const T = window.APP_TEXT;
+firebase.initializeApp(window.FIREBASE_CONFIG);
+const auth = firebase.auth(), db = firebase.firestore();
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+const ordena = (a,b) => (a.nomeFilhoBusca||'').localeCompare(b.nomeFilhoBusca||'');
+
+let cartas = [], sel = new Set(), unsub = null;
+
+$('lf').onsubmit = async e => {
+  e.preventDefault(); $('lerr').classList.add('hidden');
+  try { await auth.signInWithEmailAndPassword($('em').value, $('pw').value); }
+  catch { $('lerr').textContent = 'E-mail ou senha inválidos.'; $('lerr').classList.remove('hidden'); }
+};
+$('sair').onclick = () => auth.signOut();
+
+auth.onAuthStateChanged(u => {
+  if (u) {
+    $('loginBox').classList.add('hidden'); $('app').classList.remove('hidden');
+    unsub = db.collection('cartas').orderBy('criadoEm','desc').onSnapshot(s => {
+      cartas = s.docs.map(d => ({ id: d.id, ...d.data() })); render();
+    }, err => { console.error(err); alert('Sem permissão para ler as cartas. Confira o e-mail admin nas regras do Firestore.'); });
+  } else {
+    if (unsub) unsub();
+    $('app').classList.add('hidden'); $('loginBox').classList.remove('hidden');
+  }
+});
+
+function visiveis() {
+  const q = norm($('busca').value.trim()), f = $('filtro').value;
+  return cartas.filter(c =>
+    (!q || norm(c.nomeFilho||'').includes(q) || norm(c.remetente||'').includes(q)) &&
+    (f === 'todas' || (f === 'pend' ? !c.impressa : c.impressa))
+  ).sort(ordena);
+}
+const fmt = ts => ts?.toDate ? ts.toDate().toLocaleString('pt-BR') : '';
+const quemTxt = c => c.parentesco ? ` (${esc(c.parentesco)})` : '';
+
+function render() {
+  $('sTotal').textContent = cartas.length;
+  $('sFilhos').textContent = new Set(cartas.map(c => c.nomeFilhoBusca)).size;
+  $('sPend').textContent = cartas.filter(c => !c.impressa).length;
+  const v = visiveis();
+  $('lista').innerHTML = v.length ? v.map(c => `
+    <div class="item" data-id="${c.id}">
+      <div class="ck"><input type="checkbox" data-a="sel" ${sel.has(c.id)?'checked':''}></div>
+      <div>
+        <h3>Para: ${esc(c.nomeFilho)}<span class="tag ${c.impressa?'y':'n'}">${c.impressa?'impressa':'não impressa'}</span></h3>
+        <div class="meta">De: ${esc(c.remetente)}${quemTxt(c)} · ${fmt(c.criadoEm)}</div>
+        <div class="txt">${esc(c.mensagem)}</div>
+        <div class="acts">
+          <button class="b s" data-a="ler">Ler completa</button>
+          <button class="b s p" data-a="imp">Imprimir</button>
+          <button class="b s" data-a="mark">${c.impressa?'Marcar como não impressa':'Marcar como impressa'}</button>
+          <button class="b s d" data-a="del">Excluir</button>
+        </div>
+      </div>
+    </div>`).join('') : '<div class="empty">Nenhuma carta encontrada.</div>';
+}
+
+$('busca').oninput = render; $('filtro').onchange = render;
+
+$('lista').addEventListener('click', async e => {
+  const b = e.target.closest('[data-a]'); if (!b) return;
+  const el = b.closest('.item'), id = el.dataset.id, c = cartas.find(x => x.id === id), a = b.dataset.a;
+  if (a === 'sel') b.checked ? sel.add(id) : sel.delete(id);
+  if (a === 'ler') { el.classList.toggle('open'); b.textContent = el.classList.contains('open') ? 'Recolher' : 'Ler completa'; }
+  if (a === 'imp') imprimir([c]);
+  if (a === 'mark') await db.collection('cartas').doc(id).update({ impressa: !c.impressa });
+  if (a === 'del' && confirm('Excluir esta carta definitivamente?')) { sel.delete(id); await db.collection('cartas').doc(id).delete(); }
+});
+
+$('selTudo').onclick = () => {
+  const v = visiveis(), todos = v.every(c => sel.has(c.id));
+  v.forEach(c => todos ? sel.delete(c.id) : sel.add(c.id)); render();
+};
+$('impSel').onclick = () => {
+  const l = cartas.filter(c => sel.has(c.id)).sort(ordena);
+  l.length ? imprimir(l) : alert('Selecione ao menos uma carta.');
+};
+$('impTudo').onclick = () => { const v = visiveis(); v.length ? imprimir(v) : alert('Nada para imprimir.'); };
+
+async function imprimir(lista) {
+  $('printArea').innerHTML = lista.map(c => `
+    <section class="sheet">
+      <div class="hd"><img src="img/logo.jpg" alt=""><div><b>${esc(T.igreja)}</b><span>${esc(T.sub)} · ${esc(T.evento)}</span></div></div>
+      <h2>Para: <strong>${esc(c.nomeFilho)}</strong></h2>
+      <div class="t">${esc(c.mensagem)}</div>
+      <div class="sg">${esc(c.remetente)}${c.parentesco ? '<br><small>' + esc(c.parentesco) + '</small>' : ''}</div>
+    </section>`).join('');
+  const imgs = [...$('printArea').querySelectorAll('img')];
+  await Promise.all(imgs.map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; })));
+  window.print();
+  if (confirm('Marcar ' + lista.length + ' carta(s) como impressa(s)?')) {
+    const batch = db.batch();
+    lista.filter(c => !c.impressa).forEach(c => batch.update(db.collection('cartas').doc(c.id), { impressa: true }));
+    await batch.commit();
+  }
+}
+</script>
+</body>
+</html>
