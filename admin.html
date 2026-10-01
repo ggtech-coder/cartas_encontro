@@ -247,13 +247,16 @@ async function marcar(lista, val) {
   toast(val ? `${lista.length} carta(s) marcada(s) como impressa(s)` : 'Marcada como não impressa');
 }
 
-function excluir(c) {
-  ocultas.add(c.id); sel.delete(c.id); render();
-  if (!$('modal').classList.contains('hidden')) fecharLeitor();
-  toast('Carta excluída', { acao: 'Desfazer', ms: 6000, fn: () => { ocultas.delete(c.id); render(); } });
-  setTimeout(async () => {
-    if (ocultas.has(c.id)) { try { await db.collection('cartas').doc(c.id).delete(); } catch (e) { console.error(e); } ocultas.delete(c.id); }
-  }, 6200);
+async function excluir(c) {
+  try {
+    await db.collection('cartas').doc(c.id).delete();
+    sel.delete(c.id);
+    if (!$('modal').classList.contains('hidden')) fecharLeitor();
+    toast('Carta excluída');
+  } catch (e) {
+    console.error(e);
+    toast('Não foi possível excluir. Confira o e-mail admin nas regras do Firestore.', { ms: 7000 });
+  }
 }
 
 $('lista').addEventListener('click', e => {
@@ -265,7 +268,7 @@ $('lista').addEventListener('click', e => {
     if (a === 'sel') { t.checked ? sel.add(id) : sel.delete(id); return render(); }
     if (a === 'imp') return imprimir([c]);
     if (a === 'mark') return marcar([c], !c.impressa);
-    if (a === 'del') return confirm('Excluir esta carta?') && excluir(c);
+    if (a === 'del') return confirm('Excluir esta carta definitivamente? Não dá para desfazer.') && excluir(c);
     return abrirLeitor(visiveis().map(x => x.id), visiveis().findIndex(x => x.id === id));
   }
   if (pe) {
